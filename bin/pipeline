@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Description: Wrapper to execute the SBDD pipeline orchestrator.
+# It uses the currently active Python environment (e.g., conda/venv).
+
+set -e
+
+if [ -z "$SCHRODINGER" ]; then
+    echo -e "\033[91m[CRITICAL] SCHRODINGER environment variable is not set.\033[0m"
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON_CLI="${SCRIPT_DIR}/../src/cli.py"
+
+# Export the path so Python workers know where the framework is
+export SBDD_FRAMEWORK_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Execute using the active environment's python
+exec python3 "$PYTHON_CLI" "$@"

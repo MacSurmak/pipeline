@@ -1,0 +1,37 @@
+# ==============================================================================
+# SBDD Pipeline Configuration
+# ==============================================================================
+
+project:
+  name: "project_name"
+
+receptor:
+  input_file: "complex.pdb"         # Single PDB or multi-frame MAE/PDB
+  native_ligand_resname: "LIG"      # 3-letter code of native ligand (for RMSD & grid center)
+  keep_cofactors: ["HEM", "ZN"]     # 3-letter codes to retain (buffers are removed)
+  is_membrane_protein: false        # Set to true to implicitly model lipid bilayer
+  prep_wizard:
+    cap_termini: true
+    target_ph: 7.4
+    ph_tolerance: 1.0
+    minimize_rmsd: 0.3
+
+ligand_library:
+  input_file: "library.sdf"         # SDF, SMILES, or MAE
+  ligprep:
+    target_ph: 7.4
+    ph_tolerance: 2.0               # Wide tolerance for alternative states
+    force_field: 14                 # 14 = OPLS_2005, 16 = OPLS4 (depends on license)
+    max_states: 32                  # Max stereoisomers/tautomers per ligand
+
+docking:
+  precision: "SP"                   # HTVS, SP, XP
+  sample_rings: true                # Alternative ring conformations
+  epik_penalties: true              # Docking Score = GlideScore + Epik_Penalty
+
+analysis:
+  run_mmgbsa: true
+  prime_job_type: "REAL_MIN"        # Can be ENERGY for single-point
+  run_gnina: true                   # Requires gnina in $PATH
+  gnina_cnn_scoring: "rescore"      # default, rescore, or minimize
+  rmsd_to_native: true              # Valid only for native redocking
