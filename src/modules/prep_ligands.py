@@ -20,8 +20,9 @@ def run(cwd: Path, is_native: bool, force: bool = False):
     struct_dir.mkdir(parents=True, exist_ok=True)
     
     if is_native:
-        # For native, we use frame 1's extracted 3D reference as the 2D template generator
-        input_file = cwd / "01_prep_receptor" / "structures" / "ref_native_f1.mae"
+        # Dynamically locate the first available native reference frame
+        ref_files = list((cwd / "01_prep_receptor" / "structures").glob("ref_native_f*.mae"))
+        input_file = ref_files[0] if ref_files else (cwd / "01_prep_receptor" / "structures" / "ref_native_f1.mae")
         final_output = struct_dir / "native_prepared.maegz"
         log_name = "01_ligprep_native"
     else:

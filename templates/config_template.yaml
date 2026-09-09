@@ -1,37 +1,93 @@
-# ==============================================================================
-# SBDD Pipeline Configuration
-# ==============================================================================
-
 project:
-  name: "project_name"
+  name: "TSPO_2MGY_Screening"
 
 receptor:
-  input_file: "complex.pdb"         # Single PDB or multi-frame MAE/PDB
-  native_ligand_resname: "LIG"      # 3-letter code of native ligand (for RMSD & grid center)
-  keep_cofactors: ["HEM", "ZN"]     # 3-letter codes to retain (buffers are removed)
-  is_membrane_protein: false        # Set to true to implicitly model lipid bilayer
+  input_file: "2MGY.cif"
+  model_index: 1                     # 0 = all ensemble models, >0 = specific model
+  native_ligand_resname: "PKA"
+  keep_cofactors: []
   prep_wizard:
     cap_termini: true
     target_ph: 7.4
     ph_tolerance: 1.0
     minimize_rmsd: 0.3
 
+membrane:
+  enabled: true
+  type: "MOM"
+  topology: "in"                     # TSPO N-terminus in IMS (in), C-terminus in cytosol
+  chains: ["A"]
+  lipids:
+    upper_leaflet:
+      composition: "POPC:POPE:CHL1"
+      ratio: "5:4:1"
+    lower_leaflet:
+      composition: "POPC:POPE:POPS:CHL1"
+      ratio: "4:4:1:1"
+
 ligand_library:
-  input_file: "library.sdf"         # SDF, SMILES, or MAE
+  input_file: "pyrrolo_pyrazine_library.sdf"
   ligprep:
     target_ph: 7.4
-    ph_tolerance: 2.0               # Wide tolerance for alternative states
-    force_field: 14                 # 14 = OPLS_2005, 16 = OPLS4 (depends on license)
-    max_states: 32                  # Max stereoisomers/tautomers per ligand
+    ph_tolerance: 2.0
+    force_field: 16                  # 16 = OPLS4, 14 = OPLS_2005
+    max_states: 32
 
 docking:
-  precision: "SP"                   # HTVS, SP, XP
-  sample_rings: true                # Alternative ring conformations
-  epik_penalties: true              # Docking Score = GlideScore + Epik_Penalty
+  grid:
+    inner_box: [10, 10, 10]
+    outer_box: [26, 26, 26]
+    forcefield: "OPLS4"
+  glide:
+    precision: "SP"                  # HTVS, SP, XP
+    poses_per_lig: 1
+    sample_rings: true
+    epik_penalties: true
+    forcefield: "OPLS4"
+    postdock: true
+    write_csv: true
+  gnina:
+    exhaustiveness: 16
+    cnn_scoring: "rescore"
+    num_modes: 3
+
+gnina_rescore:
+  cnn: "crossdock_default2018"
 
 analysis:
-  run_mmgbsa: true
-  prime_job_type: "REAL_MIN"        # Can be ENERGY for single-point
-  run_gnina: true                   # Requires gnina in $PATH
-  gnina_cnn_scoring: "rescore"      # default, rescore, or minimize
-  rmsd_to_native: true              # Valid only for native redocking
+  prime_job_type: "ENERGY"           # ENERGY is drastically faster; use REAL_MIN only for small native redocking
+  funnel:
+    top_frames_per_ligand: 3
+    library_percentile_cutoff: 0.50  # Top 50% of ligands move to MM-GBSA
+  hardware:
+    host: "localhost"
+    max_jobs: 8
+
+reporting:
+  top_n_terminal: 15
+  top_n_export: 50
+  benchmark_ligands: ["PPZ_1H_Ph_BnMe", "PPZ_1H_Ph_BuMe"]
+
+admet:
+  top_n_hits: 20                     # Number of candidates evaluated from master_hitlist.csv1
+
+md_simulation:
+  enabled: true
+  system_build:
+    water_model: "opc"
+    box_padding: 15.0
+    lipid_padding: 10.0
+    neutralize: true
+    salt_conc: 0.15
+  equilibration:
+    nvt_short_ps: 50
+    nvt_long_ps: 500
+    npt_berendsen_ps: 1000
+    npt_pr_ps: 1000
+  production:
+    temperature: 303.15
+    total_time_ns: 100
+    chunk_size_ns: 10
+    replicates: 3
+    hardware:
+      mdrun_args: "-nb gpu -pme gpu -pin on -ntomp 8"

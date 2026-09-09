@@ -3,9 +3,12 @@ Worker script to calculate symmetry-aware heavy-atom RMSD between reference and 
 """
 import argparse
 import csv
+import logging
 from pathlib import Path
 from schrodinger import structure
 from schrodinger.structutils import rmsd
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 def main():
     parser = argparse.ArgumentParser(description="Calculate Conformer RMSD")
@@ -33,23 +36,41 @@ def main():
                 dscore = st.property.get('r_i_glide_docking_score', '')
                 title = st.title
                 
+                # Extract GNINA energy and CNN properties if present in SDF
+                gnina_affinity, cnn_score, cnn_affinity = "", "", ""
+                for k, v in st.property.items():
+                    k_low = k.lower()
+                    if "minimizedaffinity" in k_low or (k_low.endswith("affinity") and "cnn" not in k_low):
+                        gnina_affinity = v
+                    elif "cnnscore" in k_low:
+                        cnn_score = v
+                    elif "cnnaffinity" in k_low:
+                        cnn_affinity = v
+                
+                # Universal primary score (GlideScore or GNINA affinity)
+                primary_score = gscore or gnina_affinity or dscore or ""
+
                 results.append({
                     "Title": title,
                     "Pose_Index": i,
+                    "Score": primary_score,
                     "GlideScore": gscore,
                     "DockingScore": dscore,
+                    "CNN_Score": cnn_score,
+                    "CNN_Affinity": cnn_affinity,
                     "RMSD_Heavy": round(rmsd_val, 3)
                 })
             except Exception as e:
-                print(f"Error processing pose {i}: {e}")
+                logging.error(f"Error processing pose {i}: {e}")
 
-    keys = ["Title", "Pose_Index", "GlideScore", "DockingScore", "RMSD_Heavy"]
+    keys = ["Title", "Pose_Index", "Score", "GlideScore", "DockingScore", "CNN_Score", "CNN_Affinity", "RMSD_Heavy"]
+
     with open(args.output, 'w', newline='') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=keys)
         writer.writeheader()
         writer.writerows(results)
         
-    print(f"Successfully calculated RMSD for {len(results)} poses. Saved to {args.output}")
+    logging.info(f"Successfully calculated RMSD for {len(results)} poses. Saved to {args.output}")
 
 if __name__ == "__main__":
     main()

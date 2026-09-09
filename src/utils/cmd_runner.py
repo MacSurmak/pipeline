@@ -1,79 +1,98 @@
 """
-DRY utility for executing subprocess commands with logging, error handling, 
-and real-time log parsing for rich progress bars.
+File: src/utils/cmd_runner.py
+Description: Generic, tool-agnostic command execution engine with live log monitoring.
+Uses modular parsers from src/core/parsers.py and outputs real-time parser_debug.log.
 """
 import subprocess
 import time
-import re
 import shutil
 from pathlib import Path
 from loguru import logger
 
-def run_command(cmd: list, cwd: Path, log_name: str, progress=None, task_id=None) -> bool:
-    """
-    Executes a shell command, logs stdout/stderr to a file, handles errors,
-    and isolates all log files into a dedicated logs/ subdirectory.
-    """
+from core.parsers import get_parser, BaseLogParser
+
+def run_command(cmd: list, cwd: Path, log_name: str, progress=None, task_id=None, 
+                parser: BaseLogParser = None, stdin: Path = None, total_override: int = None,
+                step_offset: int = 0) -> bool:
     cmd_str = " ".join(str(x) for x in cmd)
     
-    # Isolate all logs
     log_dir = cwd / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"{log_name}.log"
     
-    logger.info(f"Executing: {cmd[0]} (Logging to {log_file.name})")
+    logger.info(f"Executing: {cmd[0]} (Log: {log_file.name})")
     logger.debug(f"Full command: {cmd_str}")
     
-    start_time = time.time()
+    # Auto-resolve parser if not explicitly passed
+    active_parser = parser or get_parser(cmd)
     
-    lig_pattern = re.compile(r"^LIG\s+(\d+)")
-    
-    # Identify target Job Control log (e.g. dock_f1.log) for real-time progress parsing
-    target_job_log = None
+    # Target log detection: external file for Glide (.in), Prime (-jobname), or GROMACS (-deffnm)
     if len(cmd) > 1 and str(cmd[1]).endswith(".in"):
         target_job_log = cwd / f"{Path(cmd[1]).stem}.log"
-
-    # Remove old log from previous runs to prevent 180/180 glitch
-    if target_job_log:
         target_job_log.unlink(missing_ok=True)
+    elif "-jobname" in cmd:
+        job_name_arg = cmd[cmd.index("-jobname") + 1]
+        target_job_log = cwd / f"{job_name_arg}.log"
+    elif "-deffnm" in cmd:
+        deffnm_arg = cmd[cmd.index("-deffnm") + 1]
+        target_job_log = cwd / f"{deffnm_arg}.log"
+    else:
+        target_job_log = log_file
+
+    start_time = time.time()
 
     try:
-        # Direct stdout to log_file to prevent 64kb pipe deadlocks
         with open(log_file, "w") as f_out:
             f_out.write(f"COMMAND: {cmd_str}\n\nOUTPUT:\n")
             f_out.flush()
-            
+
+            f_in = open(stdin, "r") if stdin and stdin.exists() else None
             process = subprocess.Popen(
-                cmd,
-                cwd=cwd,
-                stdout=f_out,
-                stderr=subprocess.STDOUT
+                cmd, cwd=cwd, stdin=f_in, stdout=f_out, stderr=subprocess.STDOUT
             )
 
-            last_pos = 0
             while process.poll() is None:
-                # Read target job log for real-time Glide progress
-                if progress and task_id and target_job_log and target_job_log.exists():
-                    with open(target_job_log, "r", errors="ignore") as f_job:
-                        f_job.seek(last_pos)
-                        for line in f_job:
-                            match = lig_pattern.match(line)
-                            if match:
-                                progress.update(task_id, completed=int(match.group(1)))
-                        last_pos = f_job.tell()
+                if progress and (task_id is not None) and active_parser and target_job_log.exists():
+                    try:
+                        with open(target_job_log, "rb") as f_read:
+                            f_read.seek(0, 2)
+                            f_size = f_read.tell()
+                            f_read.seek(max(0, f_size - 8192))
+                            raw_data = f_read.read().decode("utf-8", errors="ignore")
+
+                        update = active_parser.parse(raw_data)
+                        if update:
+                            update_kwargs = {}
+                            if update.completed is not None:
+                                current_step = max(0, update.completed - step_offset)
+                                update_kwargs["completed"] = current_step
+                            
+                            if total_override is not None:
+                                update_kwargs["total"] = total_override
+                            elif update.total is not None: 
+                                update_kwargs["total"] = update.total
+                                
+                            if update.description is not None: update_kwargs["description"] = update.description
+                            
+                            progress.update(task_id, **update_kwargs)
+                    except Exception:
+                        pass
+
                 time.sleep(0.5)
 
         returncode = process.returncode
         
-        # Guarantee 100% completion for the progress bar
-        if progress and task_id and returncode == 0:
+        # Explicit progress finalization
+        if progress and (task_id is not None):
             task = progress._tasks.get(task_id)
-            if task and task.total:
+            if returncode == 0 and task and task.total:
                 progress.update(task_id, completed=task.total)
+            elif returncode != 0:
+                progress.update(task_id, description=f"[red]FAILED: {Path(cmd[0]).name}[/red]")
 
-        # Automatically move all stray .log files (created by Job Control) to logs/
+        # Move stray logs created by Schrodinger JobControl
         for stray_log in cwd.glob("*.log"):
-            if stray_log.is_file():
+            if stray_log.is_file() and stray_log.name != log_file.name:
                 shutil.move(str(stray_log), str(log_dir / stray_log.name))
 
     except Exception as e:
@@ -84,15 +103,12 @@ def run_command(cmd: list, cwd: Path, log_name: str, progress=None, task_id=None
     
     if returncode != 0:
         logger.error(f"Command '{cmd[0]}' failed with exit code {returncode}.")
-        # Read the tail of the log file for quick error debugging
         try:
             with open(log_file, "r") as f:
-                lines = f.readlines()
-                last_lines = "".join(lines[-10:])
-                logger.error(f"Tail of output:\n{last_lines}")
+                logger.error(f"Tail of output:\n{''.join(f.readlines()[-10:])}")
         except Exception:
             pass
         return False
         
-    logger.success(f"Command '{cmd[0]}' completed successfully in {duration:.1f}s.")
+    logger.success(f"Command '{cmd[0]}' completed in {duration:.1f}s.")
     return True

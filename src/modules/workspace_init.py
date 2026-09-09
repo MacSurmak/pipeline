@@ -9,9 +9,7 @@ from loguru import logger
 def init_workspace(framework_dir: Path, target_dir: Path) -> None:
     templates_dir = framework_dir / "templates"
     files_to_copy = {
-        "config_template.yaml": "config.yaml",
-        "gridgen_template.in": "gridgen.in",
-        "docking_template.in": "docking.in"
+        "config_template.yaml": "config.yaml"
     }
 
     logger.info(f"Initializing SBDD workspace in {target_dir.absolute()}")
