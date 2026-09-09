@@ -52,9 +52,17 @@ def run_command(cmd: list, cwd: Path, log_name: str, progress=None, task_id=None
             )
 
             while process.poll() is None:
-                if progress and (task_id is not None) and active_parser and target_job_log.exists():
+                # Dynamically resolve active log file (handles GROMACS .part000X.log suffixes)
+                active_log = target_job_log
+                if "-deffnm" in cmd:
+                    deffnm_arg = cmd[cmd.index("-deffnm") + 1]
+                    matching_logs = sorted(cwd.glob(f"{deffnm_arg}*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+                    if matching_logs:
+                        active_log = matching_logs[0]
+
+                if progress and (task_id is not None) and active_parser and active_log.exists():
                     try:
-                        with open(target_job_log, "rb") as f_read:
+                        with open(active_log, "rb") as f_read:
                             f_read.seek(0, 2)
                             f_size = f_read.tell()
                             f_read.seek(max(0, f_size - 8192))
